@@ -1024,18 +1024,40 @@ def update_deposit(booking_id: int, data: DepositUpdate):
         raise HTTPException(status_code=404, detail="Không tìm thấy lịch")
     
     dep_date = data.deposit_date or (datetime.now().strftime("%Y-%m-%d") if data.deposit_status == "DA_COC" else None)
-    
-    # Cập nhật amount_paid nếu cọc được cộng vào
-    new_amount_paid = booking["amount_paid"]
-    if data.deposit_status == "DA_COC" and new_amount_paid < data.deposit_amount:
-        new_amount_paid = data.deposit_amount
+    dep_amount = float(data.deposit_amount or 0)
 
-    # Xác định trạng thái thanh toán
-    new_payment_status = booking["payment_status"]
-    if new_amount_paid >= booking["total_price"] and booking["total_price"] > 0:
+    # 1. Đồng bộ sang payment_installments cho khoản Cọc
+    cursor.execute("SELECT id FROM payment_installments WHERE booking_id = ? AND installment_name LIKE '%Cọc%'", (booking_id,))
+    inst_row = cursor.fetchone()
+    
+    if data.deposit_status == "DA_COC" and dep_amount > 0:
+        if inst_row:
+            cursor.execute("""
+            UPDATE payment_installments 
+            SET amount = ?, payment_date = COALESCE(?, payment_date)
+            WHERE id = ?
+            """, (dep_amount, dep_date, inst_row["id"]))
+        else:
+            cursor.execute("""
+            INSERT INTO payment_installments (booking_id, installment_name, amount, payment_method, payment_date, notes, staff_payout_status)
+            VALUES (?, 'Đợt 1 (Cọc)', ?, 'CHUYEN_KHOAN', ?, 'Cập nhật tiền cọc', 'CHUA_CHI')
+            """, (booking_id, dep_amount, dep_date))
+    elif data.deposit_status == "CHUA_COC" or dep_amount <= 0:
+        if inst_row:
+            cursor.execute("DELETE FROM payment_installments WHERE id = ?", (inst_row["id"],))
+
+    # 2. Tính lại chính xác tổng tiền thực tế từ tất cả các đợt thanh toán (installments)
+    cursor.execute("SELECT COALESCE(SUM(amount), 0) FROM payment_installments WHERE booking_id = ?", (booking_id,))
+    new_amount_paid = cursor.fetchone()[0]
+
+    # 3. Xác định trạng thái thanh toán
+    tot_price = float(booking["total_price"] or 0)
+    if tot_price > 0 and new_amount_paid >= tot_price:
         new_payment_status = "DA_TAT_TOAN"
     elif new_amount_paid > 0:
         new_payment_status = "MOT_PHAN"
+    else:
+        new_payment_status = "CHUA_THANH_TOAN"
 
     cursor.execute("""
     UPDATE bookings SET 
@@ -1045,20 +1067,11 @@ def update_deposit(booking_id: int, data: DepositUpdate):
         amount_paid = ?,
         payment_status = ?
     WHERE id = ?
-    """, (data.deposit_status, data.deposit_amount, dep_date, new_amount_paid, new_payment_status, booking_id))
+    """, (data.deposit_status, dep_amount, dep_date, new_amount_paid, new_payment_status, booking_id))
     
-    # Đồng bộ sang payment_installments
-    if data.deposit_status == "DA_COC" and data.deposit_amount > 0:
-        cursor.execute("SELECT id FROM payment_installments WHERE booking_id = ? AND installment_name LIKE '%Cọc%'", (booking_id,))
-        if not cursor.fetchone():
-            cursor.execute("""
-            INSERT INTO payment_installments (booking_id, installment_name, amount, payment_method, payment_date, notes, staff_payout_status)
-            VALUES (?, 'Đợt 1 (Cọc)', ?, 'CHUYEN_KHOAN', ?, 'Cập nhật tiền cọc', 'CHUA_CHI')
-            """, (booking_id, data.deposit_amount, dep_date))
-
     conn.commit()
     conn.close()
-    return {"message": "Cập nhật cọc thành công"}
+    return {"message": "Cập nhật cọc thành công", "amount_paid": new_amount_paid, "payment_status": new_payment_status}
 
 @app.put("/api/bookings/{booking_id}/payment")
 def update_payment(booking_id: int, data: PaymentUpdate):
@@ -1277,11 +1290,30 @@ def update_booking(booking_id: int, data: BookingUpdate):
     new_notes = data.notes if data.notes is not None else bk["notes"]
     new_client_source = data.client_source if data.client_source is not None else bk["client_source"]
     
-    # Recalculate payment_status based on amount_paid vs new_total_price
-    amount_paid = bk["amount_paid"]
-    if amount_paid >= new_total_price and new_total_price > 0:
+    # Đồng bộ sang payment_installments nếu thông tin cọc được sửa trong form sửa đơn
+    cursor.execute("SELECT id FROM payment_installments WHERE booking_id = ? AND installment_name LIKE '%Cọc%'", (booking_id,))
+    deposit_inst = cursor.fetchone()
+    float_dep = float(new_deposit_amt or 0)
+    if new_deposit_status == "DA_COC" and float_dep > 0:
+        if deposit_inst:
+            cursor.execute("UPDATE payment_installments SET amount = ? WHERE id = ?", (float_dep, deposit_inst["id"]))
+        else:
+            cursor.execute("""
+            INSERT INTO payment_installments (booking_id, installment_name, amount, payment_method, payment_date, notes, staff_payout_status)
+            VALUES (?, 'Đợt 1 (Cọc)', ?, 'CHUYEN_KHOAN', ?, 'Cập nhật tiền cọc', 'CHUA_CHI')
+            """, (booking_id, float_dep, datetime.now().strftime("%Y-%m-%d")))
+    elif new_deposit_status == "CHUA_COC" or float_dep <= 0:
+        if deposit_inst:
+            cursor.execute("DELETE FROM payment_installments WHERE id = ?", (deposit_inst["id"],))
+
+    # Recalculate amount_paid from all installments
+    cursor.execute("SELECT COALESCE(SUM(amount), 0) FROM payment_installments WHERE booking_id = ?", (booking_id,))
+    recalculated_paid = cursor.fetchone()[0]
+
+    # Recalculate payment_status based on recalculated_paid vs new_total_price
+    if new_total_price > 0 and recalculated_paid >= new_total_price:
         new_pay_status = "DA_TAT_TOAN"
-    elif amount_paid > 0:
+    elif recalculated_paid > 0:
         new_pay_status = "MOT_PHAN"
     else:
         new_pay_status = "CHUA_THANH_TOAN"
@@ -1320,6 +1352,7 @@ def update_booking(booking_id: int, data: BookingUpdate):
         total_price = ?,
         deposit_amount = ?,
         deposit_status = ?,
+        amount_paid = ?,
         payment_status = ?,
         notes = ?,
         client_source = ?
@@ -1327,7 +1360,7 @@ def update_booking(booking_id: int, data: BookingUpdate):
     """, (
         new_cust_name, new_cust_phone, new_artist, new_service,
         new_date, new_total_price, new_deposit_amt, new_deposit_status,
-        new_pay_status, new_notes, new_client_source, booking_id
+        recalculated_paid, new_pay_status, new_notes, new_client_source, booking_id
     ))
     
     # Đồng bộ sang các đợt xăm nếu có
@@ -3103,10 +3136,14 @@ def get_customers(search: Optional[str] = None):
     conn = get_db()
     cursor = conn.cursor()
     
-    # Lấy thông tin thống kê từ bookings
+    # Lấy thông tin thống kê từ bookings: Phân biệt rõ khách có số điện thoại vs khách không có SĐT
     cursor.execute("""
     SELECT 
-        b.customer_phone as phone,
+        CASE 
+            WHEN TRIM(COALESCE(b.customer_phone, '')) != '' THEN TRIM(b.customer_phone)
+            ELSE 'KH_NAME_' || LOWER(TRIM(b.customer_name))
+        END as customer_key,
+        COALESCE(NULLIF(TRIM(b.customer_phone), ''), '') as phone,
         b.customer_name as name,
         COUNT(b.id) as total_bookings,
         COALESCE(SUM(b.amount_paid), 0) as total_spent,
@@ -3115,21 +3152,25 @@ def get_customers(search: Optional[str] = None):
         MAX(b.appointment_date) as last_visit,
         MIN(b.appointment_date) as first_visit
     FROM bookings b
-    GROUP BY b.customer_phone
+    GROUP BY customer_key
     """)
-    booking_map = {row["phone"]: dict(row) for row in cursor.fetchall()}
+    booking_map = {row["customer_key"]: dict(row) for row in cursor.fetchall()}
     
     # Lấy thông tin profile phụ
     cursor.execute("SELECT * FROM customer_profiles")
     profiles = {row["phone"]: dict(row) for row in cursor.fetchall()}
     
-    # Gom danh sách tất cả các số điện thoại duy nhất từ cả 2 nguồn
-    all_phones = list(set(list(booking_map.keys()) + list(profiles.keys())))
-    
+    # Gom danh sách tất cả các key duy nhất từ cả 2 nguồn
+    all_keys = set(list(booking_map.keys()))
+    for p_phone in profiles.keys():
+        if p_phone and p_phone.strip():
+            all_keys.add(p_phone.strip())
+            
     result = []
-    for phone in all_phones:
-        b_info = booking_map.get(phone, {})
-        prof = profiles.get(phone, {})
+    for key in all_keys:
+        b_info = booking_map.get(key, {})
+        phone = b_info.get("phone", "")
+        prof = profiles.get(phone, {}) if phone else profiles.get(key, {})
         
         name = prof.get("name") or b_info.get("name") or "Khách hàng"
         total_bookings = b_info.get("total_bookings", 0)
@@ -3139,25 +3180,44 @@ def get_customers(search: Optional[str] = None):
         last_visit = b_info.get("last_visit", "")
         first_visit = b_info.get("first_visit", "")
 
-        # Tìm thợ quen
-        cursor.execute("""
-        SELECT artist_name, COUNT(*) as cnt 
-        FROM bookings 
-        WHERE customer_phone = ? 
-        GROUP BY artist_name 
-        ORDER BY cnt DESC LIMIT 1
-        """, (phone,))
-        fav_artist_row = cursor.fetchone()
+        # Tìm thợ quen & Lịch sử xăm chuẩn xác theo SĐT hoặc theo Tên nếu không có SĐT
+        if phone:
+            cursor.execute("""
+            SELECT artist_name, COUNT(*) as cnt 
+            FROM bookings 
+            WHERE customer_phone = ? 
+            GROUP BY artist_name 
+            ORDER BY cnt DESC LIMIT 1
+            """, (phone,))
+            fav_artist_row = cursor.fetchone()
+            
+            cursor.execute("""
+            SELECT id, service_desc, artist_name, appointment_date, total_price, deposit_amount, deposit_status, amount_paid, payment_status 
+            FROM bookings 
+            WHERE customer_phone = ? 
+            ORDER BY id DESC
+            """, (phone,))
+            history = [dict(r) for r in cursor.fetchall()]
+        else:
+            cursor.execute("""
+            SELECT artist_name, COUNT(*) as cnt 
+            FROM bookings 
+            WHERE (customer_phone IS NULL OR TRIM(customer_phone) = '') AND LOWER(TRIM(customer_name)) = LOWER(TRIM(?))
+            GROUP BY artist_name 
+            ORDER BY cnt DESC LIMIT 1
+            """, (name,))
+            fav_artist_row = cursor.fetchone()
+            
+            cursor.execute("""
+            SELECT id, service_desc, artist_name, appointment_date, total_price, deposit_amount, deposit_status, amount_paid, payment_status 
+            FROM bookings 
+            WHERE (customer_phone IS NULL OR TRIM(customer_phone) = '') AND LOWER(TRIM(customer_name)) = LOWER(TRIM(?))
+            ORDER BY id DESC
+            """, (name,))
+            history = [dict(r) for r in cursor.fetchall()]
+
         fav_artist = fav_artist_row[0] if fav_artist_row else "Chưa rõ"
 
-        # Lịch sử xăm
-        cursor.execute("""
-        SELECT id, service_desc, artist_name, appointment_date, total_price, deposit_amount, deposit_status, amount_paid, payment_status 
-        FROM bookings 
-        WHERE customer_phone = ? 
-        ORDER BY id DESC
-        """, (phone,))
-        history = [dict(r) for r in cursor.fetchall()]
         for h in history:
             cursor.execute("SELECT * FROM payment_installments WHERE booking_id = ? ORDER BY id ASC", (h["id"],))
             h["installments"] = [dict(ins) for ins in cursor.fetchall()]
@@ -3171,6 +3231,7 @@ def get_customers(search: Optional[str] = None):
             segment = "KHACH_MOI"
 
         item = {
+            "customer_key": key,
             "phone": phone,
             "name": name,
             "dob": prof.get("dob", ""),
@@ -3257,12 +3318,22 @@ def update_customer(phone: str, data: CustomerUpdate):
     return {"message": "Cập nhật thông tin khách hàng thành công"}
 
 @app.delete("/api/customers/{phone}")
-def delete_customer(phone: str):
+def delete_customer(phone: str, name: Optional[str] = None):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM customer_profiles WHERE phone = ?", (phone,))
-    cursor.execute("DELETE FROM bookings WHERE customer_phone = ?", (phone,))
-    cursor.execute("DELETE FROM tattoo_sessions WHERE customer_phone = ?", (phone,))
+    clean_p = phone.strip() if phone else ""
+    if clean_p.startswith("KH_NAME_") or clean_p == "NO_PHONE" or not clean_p:
+        cust_name = name or (clean_p.replace("KH_NAME_", "") if clean_p.startswith("KH_NAME_") else "")
+        if not cust_name:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Không có thông tin xác định khách hàng")
+        cursor.execute("DELETE FROM customer_profiles WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))", (cust_name,))
+        cursor.execute("DELETE FROM bookings WHERE (customer_phone IS NULL OR TRIM(customer_phone) = '') AND LOWER(TRIM(customer_name)) = LOWER(TRIM(?))", (cust_name,))
+        cursor.execute("DELETE FROM tattoo_sessions WHERE (customer_phone IS NULL OR TRIM(customer_phone) = '') AND LOWER(TRIM(customer_name)) = LOWER(TRIM(?))", (cust_name,))
+    else:
+        cursor.execute("DELETE FROM customer_profiles WHERE phone = ?", (clean_p,))
+        cursor.execute("DELETE FROM bookings WHERE customer_phone = ?", (clean_p,))
+        cursor.execute("DELETE FROM tattoo_sessions WHERE customer_phone = ?", (clean_p,))
     conn.commit()
     conn.close()
     return {"message": "Đã xóa khách hàng và toàn bộ lịch sử liên quan"}

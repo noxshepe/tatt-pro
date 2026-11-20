@@ -9358,9 +9358,13 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
                 });
                 closeModal('modal-deposit');
                 loadDeposits();
+                loadSessions();
+                loadPayments();
+                loadCustomers();
                 loadStaff();
+                loadDashboard();
             } catch (err) {
-                alert("Lỗi cập nhật");
+                alert("Lỗi cập nhật cọc");
             }
         }
 
@@ -9498,13 +9502,15 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
                     badge = `<span class="bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold px-2 py-0.5 rounded-full">Mới</span>`;
                 }
 
+                const custIdent = (c.customer_key || c.phone || c.name).replace(/'/g, "\\'");
+                const custPhoneDisplay = c.phone ? c.phone : '<span class="text-slate-400 italic">Chưa có SĐT</span>';
                 return `
-                    <tr onclick="openCustomerModal('${c.phone}')" class="hover:bg-amber-50/50 cursor-pointer transition text-xs">
+                    <tr onclick="openCustomerModal('${custIdent}')" class="hover:bg-amber-50/50 cursor-pointer transition text-xs">
                         <td class="py-3.5 px-4 font-bold text-slate-900">
                             ${c.name} ${badge}
                         </td>
                         <td class="py-3.5 px-4 font-medium text-slate-600">
-                            ${c.phone}
+                            ${custPhoneDisplay}
                         </td>
                         <td class="py-3.5 px-4 text-center font-bold text-slate-800">
                             ${c.total_bookings}
@@ -9520,13 +9526,13 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
                         </td>
                         <td class="py-3.5 px-4 text-center">
                             <div class="flex items-center justify-center gap-1.5">
-                                <button onclick="event.stopPropagation(); openCustomerModal('${c.phone}')" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-blue-600 rounded-lg text-xs font-semibold border border-slate-200 shadow-2xs transition">
+                                <button onclick="event.stopPropagation(); openCustomerModal('${custIdent}')" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-blue-600 rounded-lg text-xs font-semibold border border-slate-200 shadow-2xs transition">
                                     Hồ Sơ
                                 </button>
-                                <button onclick="event.stopPropagation(); openEditCustomerForm('${c.phone}')" title="Sửa thông tin khách" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold border border-slate-200 transition">
+                                <button onclick="event.stopPropagation(); openEditCustomerForm('${custIdent}')" title="Sửa thông tin khách" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold border border-slate-200 transition">
                                     <i class="fa-solid fa-pen text-amber-600 mr-1"></i> Sửa
                                 </button>
-                                <button onclick="event.stopPropagation(); handleDeleteCustomer('${c.phone}', '${c.name.replace(/'/g, "\\'")}')" title="Xóa khách hàng" class="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-600 rounded-lg text-xs font-semibold border border-slate-200 transition">
+                                <button onclick="event.stopPropagation(); handleDeleteCustomer('${custIdent}', '${c.name.replace(/'/g, "\\'")}')" title="Xóa khách hàng" class="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-600 rounded-lg text-xs font-semibold border border-slate-200 transition">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
                             </div>
@@ -9550,12 +9556,17 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
             openModal('modal-customer-form');
         }
 
-        function openEditCustomerForm(phone) {
-            const c = allCustomers.find(x => x.phone === phone);
+        function openEditCustomerForm(ident) {
+            const c = allCustomers.find(x => 
+                (x.customer_key && x.customer_key === ident) || 
+                (x.phone && x.phone === ident) || 
+                (x.name && x.name === ident)
+            );
             if (!c) return;
             document.getElementById('cust-form-is-edit').value = '1';
-            document.getElementById('cust-form-orig-phone').value = phone;
-            document.getElementById('cust-form-name').value = c.name;
+            document.getElementById('cust-form-orig-phone').value = c.phone || c.customer_key || c.name;
+            document.getElementById('cust-form-phone').value = c.phone || '';
+            document.getElementById('cust-form-name').value = c.name || '';
             document.getElementById('cust-form-dob').value = c.dob || '';
             document.getElementById('cust-form-style').value = c.style_preference || '';
             document.getElementById('cust-form-health').value = c.health_notes || '';
@@ -9619,17 +9630,17 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
             }
         }
 
-        async function handleDeleteCustomer(phone, name) {
+        async function handleDeleteCustomer(ident, name) {
             const confirmed = await showConfirmDialog({
                 title: 'Xóa Hồ Sơ Khách Hàng',
-                message: `Bạn có chắc muốn xóa khách hàng "${name}" (${phone}) không? Toàn bộ hồ sơ và lịch sử các đợt xăm của khách này sẽ bị xóa.`,
+                message: `Bạn có chắc muốn xóa khách hàng "${name}" không? Toàn bộ hồ sơ và lịch sử các đợt xăm của khách này sẽ bị xóa.`,
                 confirmText: 'Xóa hồ sơ',
                 cancelText: 'Giữ lại',
                 type: 'danger'
             });
             if (!confirmed) return;
             try {
-                const res = await fetch(`/api/customers/${encodeURIComponent(phone)}`, { method: 'DELETE' });
+                const res = await fetch(`/api/customers/${encodeURIComponent(ident)}?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
                 if (!res.ok) {
                     alert("Không thể xóa khách hàng");
                     return;
@@ -9644,21 +9655,25 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
             }
         }
 
-        function openCustomerModal(phone) {
-            const customer = allCustomers.find(c => c.phone === phone);
+        function openCustomerModal(ident) {
+            const customer = allCustomers.find(c => 
+                (c.customer_key && c.customer_key === ident) || 
+                (c.phone && c.phone === ident) || 
+                (c.name && c.name === ident)
+            );
             if (!customer) return;
             selectedCustomer = customer;
 
             document.getElementById('cust-modal-avatar').innerText = customer.name.charAt(0);
             document.getElementById('cust-modal-name').innerHTML = `${customer.name}`;
-            document.getElementById('cust-modal-phone').innerText = customer.phone;
+            document.getElementById('cust-modal-phone').innerText = customer.phone || 'Chưa có SĐT';
             document.getElementById('cust-modal-spent').innerText = formatVND(customer.total_spent);
             document.getElementById('cust-modal-jobs').innerText = `${customer.total_bookings}`;
             document.getElementById('cust-modal-debt').innerText = formatVND(customer.total_debt);
             document.getElementById('cust-modal-fav').innerText = `Thợ quen: ${customer.fav_artist}`;
 
-            document.getElementById('cust-input-phone').value = customer.phone;
-            document.getElementById('cust-input-name').value = customer.name;
+            document.getElementById('cust-input-phone').value = customer.phone || '';
+            document.getElementById('cust-input-name').value = customer.name || '';
             document.getElementById('cust-input-dob').value = customer.dob || '';
             document.getElementById('cust-input-style').value = customer.style_preference || '';
             document.getElementById('cust-input-health').value = customer.health_notes || '';
@@ -9669,7 +9684,10 @@ Bạn có chắc muốn xếp trùng 2 ca cho thợ ${targetArtist} lúc ${targe
             const custSessions = allSessions.filter(s => {
                 const sp = (s.customer_phone || '').trim();
                 const sn = (s.customer_name || '').trim().toLowerCase();
-                return (custPhone && sp === custPhone) || (custName && sn === custName);
+                if (custPhone && sp) {
+                    return sp === custPhone;
+                }
+                return custName && sn === custName;
             });
 
             if (custSessions.length > 0) {
