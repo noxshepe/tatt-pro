@@ -1,18 +1,9 @@
 {
-  "version": "2.0.0",
-  "title": "TattPro v2.0.0 - Bản Phát Hành Thương Mại",
+  "version": "2.0.0-commercial",
   "build_date": "2026-11-19",
-  "release_date": "2026-11-19",
   "app_name": "TattPro",
   "slogan": "Quản lý tiệm xăm",
   "edition": "Commercial Pro",
-  "mandatory": false,
-  "changelog": [
-    "Khởi động siêu tốc không mở cửa sổ phụ hay console",
-    "Bảo mật kích hoạt bản quyền Ed25519 Offline 100%",
-    "Thanh tiêu đề và các tab cố định chống tràn cuộn thông minh",
-    "Loại bỏ trường thừa, giao diện gọn gàng trực quan",
-    "Đồng bộ báo cáo tài chính và công nợ chuẩn xác"
-  ],
-  "download_url": "https://github.com/noxshepe/tatt-pro/releases/latest"
+  "update_url": "https://raw.githubusercontent.com/noxshepe/tatt-pro/main/version.json",
+  "channel": "commercial"
 }

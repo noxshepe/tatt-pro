@@ -1,0 +1,13 @@
+*.db
+*.db-journal
+*.db-wal
+*.bak
+*.dat
+*.tmp
+*.log
+backups/
+_update_temp/
+dist/
+build/
+__pycache__/
+*.pyc
