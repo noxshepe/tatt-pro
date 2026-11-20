@@ -4228,7 +4228,7 @@ def api_set_update_url(data: UpdateUrlConfig):
 def api_check_update(custom_url: Optional[str] = Query(None)):
     info = get_app_version_info()
     current_version = info.get("version", "1.0.0")
-    target_url = (custom_url.strip() if custom_url else None) or info.get("update_url")
+    target_url = (custom_url.strip() if isinstance(custom_url, str) and custom_url else None) or info.get("update_url")
 
     if not target_url:
         return {
