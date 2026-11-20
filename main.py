@@ -4240,9 +4240,29 @@ def api_check_update(custom_url: Optional[str] = Query(None)):
 
     try:
         import urllib.request
-        req = urllib.request.Request(target_url, headers={"User-Agent": "TiemXamStudio-Updater/1.0"})
-        with urllib.request.urlopen(req, timeout=6.0) as response:
-            remote_data = json.loads(response.read().decode("utf-8-sig"))
+        import base64
+        remote_data = None
+        # Ưu tiên đọc trực tiếp từ GitHub API để tránh cache trễ của raw CDN
+        if "raw.githubusercontent.com" in target_url:
+            try:
+                parts = target_url.replace("https://raw.githubusercontent.com/", "").split("/")
+                if len(parts) >= 3:
+                    owner, repo = parts[0], parts[1]
+                    fpath = "/".join(parts[3:]) if len(parts) > 3 else parts[2]
+                    api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{fpath}"
+                    api_req = urllib.request.Request(api_url, headers={"User-Agent": "TiemXamStudio-Updater/1.0"})
+                    with urllib.request.urlopen(api_req, timeout=5.0) as api_resp:
+                        api_content = json.loads(api_resp.read().decode("utf-8"))
+                        remote_data = json.loads(base64.b64decode(api_content["content"]).decode("utf-8-sig"))
+            except Exception:
+                pass
+
+        if remote_data is None:
+            sep = "&" if "?" in target_url else "?"
+            no_cache_url = f"{target_url}{sep}_cb={int(time.time())}"
+            req = urllib.request.Request(no_cache_url, headers={"User-Agent": "TiemXamStudio-Updater/1.0", "Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=6.0) as response:
+                remote_data = json.loads(response.read().decode("utf-8-sig"))
 
         remote_version = remote_data.get("version", "1.0.0")
         has_update = compare_versions(remote_version, current_version) > 0
