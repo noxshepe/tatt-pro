@@ -650,6 +650,7 @@ async def license_check_middleware(request: Request, call_next):
     whitelist_prefixes = [
         "/static",
         "/api/license",
+        "/api/system",
         "/favicon.ico"
     ]
     if path == "/" or any(path.startswith(prefix) for prefix in whitelist_prefixes):
