@@ -1,9 +1,17 @@
 {
-  "version": "2.0.0-commercial",
-  "build_date": "2026-11-19",
+  "version": "2.0.1",
+  "title": "TattPro v2.0.1 - Nâng Cấp Báo Cáo Tài Chính & Huy Hiệu Thông Báo",
+  "build_date": "2026-11-20",
+  "release_date": "2026-11-20",
   "app_name": "TattPro",
   "slogan": "Quản lý tiệm xăm",
   "edition": "Commercial Pro",
-  "update_url": "https://raw.githubusercontent.com/noxshepe/tatt-pro/main/version.json",
-  "channel": "commercial"
+  "mandatory": false,
+  "changelog": [
+    "Huy hiệu số đỏ thông minh tự động đếm và tự ẩn khi hoàn thành trên các tab Đặt Cọc, Công Nợ, Nhân Viên",
+    "4 Thẻ KPI tài chính mới: Tách rõ doanh thu của từng thợ và lợi nhuận tiệm",
+    "Tổng quan chi tiết 3 Tab: Việc cần xử lý, Nhật ký thu tiền, Bảng hiệu suất thợ",
+    "Nút Cập Nhật Phần Mềm trực tiếp trên menu kèm cơ chế nâng cấp tự động an toàn 100%"
+  ],
+  "download_url": "https://raw.githubusercontent.com/noxshepe/tatt-pro/main/TattPro_v2.0.1_Update.zip"
 }
